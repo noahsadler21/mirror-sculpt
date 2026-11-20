@@ -1,0 +1,1366 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0a2c52">
+<meta name="description" content="Sculpt one object with your fingers and watch a second answer through a mirror map, a formula or a photo.">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Mirror Sculpt">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<style>
+/* what the artifact host gives the page, given here instead */
+:root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+html, body { margin: 0; background: #0e3a6b; }
+body { font: 14px system-ui, sans-serif; }
+img { max-width: 100%; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<title>Mirror Sculpt</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=Inter:wght@400;500;600&display=swap">
+<style>
+/* Layout: one screen. The scene fills it; a slim top bar, a thumb-height
+   tool tray at the bottom, and sheets that slide up over the scene. */
+:root {
+  --ground: #0e3a6b;        /* blueprint */
+  --ground-deep: #0a2c52;
+  --panel: rgba(13, 34, 62, 0.92);
+  --line: #2a5288;
+  --ink: #dbe4f1;
+  --dim: #8fa6c6;
+  --brass: #c8a05a;         /* the accent: the brush, the selection, the picture */
+  --carve: #e0876f;
+  --source: #4c5057;
+  --target: #5a5650;
+  --display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --body: "Inter", "Segoe UI", system-ui, sans-serif;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body {
+  background: var(--ground); color: var(--ink); font-family: var(--body);
+  overflow: hidden; overscroll-behavior: none; -webkit-user-select: none; user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+#app { position: relative; height: 100%; display: flex; flex-direction: column; }
+#scene { flex: 1; min-height: 0; position: relative; touch-action: none; }
+canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+.bar {
+  display: flex; align-items: center; gap: 8px;
+  padding-left: max(12px, env(safe-area-inset-left, 0px));
+  padding-right: max(12px, env(safe-area-inset-right, 0px));
+}
+#top { padding-block: 8px; background: var(--ground-deep); border-bottom: 1px solid var(--line); }
+#top h1 { font-family: var(--display); font-weight: 600; font-size: 17px; letter-spacing: 0.3px;
+  margin: 0; white-space: nowrap; }
+#top h1 span { color: var(--brass); }
+#top .grow { flex: 1; min-width: 0; }
+select, input[type=text] {
+  font: 500 14px var(--body); color: var(--ink); background: var(--ground);
+  border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; height: 38px; min-width: 0;
+}
+#mapSel { width: 100%; max-width: 240px; }
+
+#tray { background: var(--ground-deep); border-top: 1px solid var(--line);
+  padding-block: 8px calc(8px + env(safe-area-inset-bottom, 0px));
+  display: flex; flex-direction: column; gap: 8px;
+  align-items: stretch; }   /* rows take the screen's width, so sliders shrink to fit */
+.slider label { flex: none; }
+.row { display: flex; gap: 8px; align-items: center; }
+button {
+  font: 600 14px var(--body); color: var(--ink); background: var(--ground);
+  border: 1px solid var(--line); border-radius: 10px; min-height: 44px; padding: 0 12px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer;
+}
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+button:active { transform: translateY(1px); }
+.seg { display: flex; flex: 1; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.seg button { flex: 1; border: 0; border-radius: 0; background: transparent; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed=true] { background: var(--brass); color: #1b1407; }
+.seg button[data-mode=carve][aria-pressed=true] { background: var(--carve); }
+.slider { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.slider label { font-size: 12px; color: var(--dim); letter-spacing: 0.6px; text-transform: uppercase; width: 62px; }
+input[type=range] { flex: 1; min-width: 0; accent-color: var(--brass); height: 32px; }
+.chip { font-size: 13px; color: var(--brass); border-color: var(--brass); }
+
+#toast {
+  position: absolute; left: 50%; top: 12px; transform: translateX(-50%);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
+  padding: 8px 14px; font-size: 13px; max-width: calc(100% - 32px); text-align: center;
+  pointer-events: none; transition: opacity .25s; opacity: 0;
+}
+#toast.on { opacity: 1; }
+#legend {
+  position: absolute; left: max(12px, env(safe-area-inset-left, 0px)); bottom: 12px;
+  font-size: 12px; color: var(--dim); line-height: 1.6; pointer-events: none;
+  background: rgba(10, 44, 82, 0.6); border-radius: 10px; padding: 8px 10px;
+}
+#legend b { color: var(--ink); font-weight: 600; }
+
+.sheet {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 5; max-height: 78%;
+  overflow: auto; background: var(--panel); border-top: 1px solid var(--brass);
+  border-radius: 16px 16px 0 0; padding-block: 14px calc(16px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 10px;
+}
+.sheet h2 { font-family: var(--display); font-size: 16px; margin: 0; display: flex; justify-content: space-between; align-items: center; }
+.sheet p { margin: 0; color: var(--dim); font-size: 13px; line-height: 1.5; max-width: 62ch; }
+.sheet .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 14px; }
+.field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.field label { font-size: 12px; color: var(--dim); display: flex; justify-content: space-between; }
+.field label output { color: var(--ink); font-variant-numeric: tabular-nums; }
+.note { font-size: 13px; color: var(--dim); }
+.note.bad { color: var(--carve); }
+code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px; color: var(--ink); }
+.colours { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px 14px; }
+.colour { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.colour label { font-size: 12px; color: var(--dim); }
+.pick { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.pick input[type=color] { width: 44px; height: 44px; padding: 0; border: 1px solid var(--line); border-radius: 10px; background: none; }
+.swatch { width: 32px; height: 32px; min-height: 32px; padding: 0; border-radius: 50%; border: 2px solid var(--line); }
+.swatch.own { border-style: dashed; }
+.spec { min-height: 32px; height: 32px; font-size: 12px; padding: 0 10px; border-radius: 16px; }
+.spec[aria-pressed=true] { border-color: var(--brass); color: var(--brass); }
+#spectrum { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); border-radius: 12px; padding: 10px; }
+#spectrum canvas { position: static; width: 100%; border-radius: 8px; touch-action: none; display: block; }
+.spec-head { display: flex; justify-content: space-between; font-size: 13px; color: var(--dim); }
+.spec-head #specHex { color: var(--ink); font-family: ui-monospace, Consolas, monospace; }
+.swatch[aria-pressed=true] { border-color: var(--ink); box-shadow: 0 0 0 2px var(--brass); }
+.file { position: relative; overflow: hidden; }
+.file input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+@media (prefers-reduced-motion: reduce) { #toast { transition: none; } }
+</style>
+
+<div id="app">
+  <div id="top" class="bar">
+    <h1>Mirror <span>Sculpt</span></h1>
+    <div class="grow"><select id="mapSel" aria-label="How a change crosses to the right object"></select></div>
+    <button id="fBtn" aria-label="Function">ƒ</button>
+    <button id="moreBtn" aria-label="More">⋯</button>
+  </div>
+
+  <div id="scene">
+    <canvas id="cv"></canvas>
+    <div id="toast" role="status"></div>
+    <div id="legend">
+      <b>1 finger</b> on the left object sculpts · on empty space orbits<br>
+      <b>2 fingers</b> orbit and pinch · <b>hold 2 still</b> to draw a selection box
+    </div>
+
+    <section class="sheet" id="fSheet" hidden aria-label="Function">
+      <h2>The function <button data-close>Done</button></h2>
+      <p>What each change becomes on the right object, after the map. <code>d</code> is the change,
+        <code>dx dy dz mag</code> its parts, <code>x y z r</code> where it lands. A number scales the change;
+        three values in brackets replace it.</p>
+      <select id="fPreset" aria-label="Presets"></select>
+      <input type="text" id="fText" placeholder="-d * sin(z * 3)" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <div id="fNote" class="note">No function: the map alone.</div>
+    </section>
+
+    <section class="sheet" id="pSheet" hidden aria-label="Picture">
+      <h2>The picture <button data-close>Done</button></h2>
+      <p>A photo stands beside the left object like a projector. Bright pixels pull the surface toward it,
+        dark ones carve. Turn it around the object or on its own centre to change the direction.</p>
+      <div class="row">
+        <button class="file" style="flex:1">Choose photo<input type="file" id="pFile" accept="image/*"></button>
+        <button class="file" style="flex:1">Depth map<input type="file" id="dFile" accept="image/*"></button>
+      </div>
+      <div id="pNote" class="note">No picture yet. A sample of rings is loaded so you can try it.</div>
+      <div class="grid">
+        <div class="field"><label for="pOrbit">Orbit around the axis <output>0°</output></label><input type="range" id="pOrbit" min="-180" max="180" value="0"></div>
+        <div class="field"><label for="pSpin">Spin on its centre <output>0°</output></label><input type="range" id="pSpin" min="-180" max="180" value="0"></div>
+        <div class="field"><label for="pTilt">Tilt <output>0°</output></label><input type="range" id="pTilt" min="-75" max="75" value="0"></div>
+        <div class="field"><label for="pHeight">Height <output>2.5</output></label><input type="range" id="pHeight" min="0" max="5" step="0.05" value="2.5"></div>
+        <div class="field"><label for="pSize">Size <output>1.6</output></label><input type="range" id="pSize" min="0.2" max="6" step="0.05" value="1.6"></div>
+        <div class="field"><label for="pAmount">Amount <output>0.18</output></label><input type="range" id="pAmount" min="-0.6" max="0.6" step="0.01" value="0.18"></div>
+        <div class="field"><label for="pDepth">Depth weight <output>100%</output></label><input type="range" id="pDepth" min="0" max="100" value="100"></div>
+        <div class="field"><label for="dHow">Depth colours</label>
+          <select id="dHow"><option value="auto">Auto: grey or a colour map</option><option value="grey">Grey</option><option value="turbo">Turbo</option><option value="jet">Jet</option><option value="viridis">Viridis</option><option value="inferno">Inferno</option><option value="magma">Magma</option><option value="plasma">Plasma</option><option value="hue">Rainbow (hue)</option></select></div>
+        <div class="field"><label for="dFlip">Which end is near</label>
+          <select id="dFlip"><option value="0">Bright / last colour is near</option><option value="1">Dark / first colour is near</option></select></div>
+        <div class="field"><label for="pMode">Mode</label>
+          <select id="pMode"><option value="brightness">Brightness: pull and carve</option><option value="lift">Lift: pull only</option><option value="colour">Colour as a direction</option></select></div>
+        <div class="field"><label for="pArrow">Aim with an arrow</label>
+          <select id="pArrow"><option value="off">Off: the picture's facing</option><option value="on">On</option></select></div>
+        <div class="field"><label for="pAngle">Arrow angle <output>90°</output></label><input type="range" id="pAngle" min="0" max="360" value="90"></div>
+        <div class="field"><label for="pLift">Arrow lift <output>0°</output></label><input type="range" id="pLift" min="-90" max="90" value="0"></div>
+      </div>
+      <button id="pApply" style="border-color:var(--brass)">Apply the picture</button>
+    </section>
+
+    <section class="sheet" id="mSheet" hidden aria-label="More">
+      <h2>More <button data-close>Done</button></h2>
+      <div class="colours">
+        <div class="colour"><label>Left object's colour</label>
+          <div class="pick" data-for="source"><button class="spec" data-for="source" aria-label="Choose the left colour from the spectrum">Spectrum</button></div></div>
+        <div class="colour"><label>Right object's colour</label>
+          <div class="pick" data-for="target"><button class="spec" data-for="target" aria-label="Choose the right colour from the spectrum">Spectrum</button></div></div>
+      </div>
+      <div id="spectrum" hidden>
+        <div class="spec-head"><span id="specFor">Left object</span><span id="specHex">#4c5057</span></div>
+        <canvas id="svBox" height="150" aria-label="Saturation and brightness: drag to choose"></canvas>
+        <canvas id="hueBar" height="30" aria-label="Hue: drag to choose"></canvas>
+        <div class="row"><button id="specSave" style="flex:1">Save as swatch</button><button id="specDone" style="flex:1">Done</button></div>
+      </div>
+      <p>Open a scan or model: PLY (as TDLiDAR exports its point clouds), OBJ, or a list of points
+        (XYZ, CSV, TXT). It is stood on the ground and sized to the monolith.</p>
+      <div class="grid">
+        <div class="field"><label for="mWhere">Put it on</label>
+          <select id="mWhere"><option value="left">The left object</option><option value="right">The right object</option><option value="both">Both</option></select></div>
+        <div class="field"><label for="mUp">Which way is up in the file</label>
+          <select id="mUp"><option value="y">Y up (phones, ARKit, Blender OBJ)</option><option value="z">Z up (Rhino)</option><option value="-y">−Y up</option></select></div>
+        <div class="field"><label for="mCap">Points kept, at most</label>
+          <select id="mCap"><option value="5000">5,000 (fastest)</option><option value="12000" selected>12,000</option><option value="25000">25,000 (slower)</option></select></div>
+      </div>
+      <button class="file">Open a scan or model<input type="file" id="mFile" accept=".ply,.obj,.xyz,.csv,.txt,.pts"></button>
+      <div class="row"><button id="finer" style="flex:1">Finer</button><button id="coarser" style="flex:1">Coarser</button><button id="resetBtn" style="flex:1">Start again</button></div>
+      <div class="row"><button id="saveSrc" style="flex:1">Save left as OBJ</button><button id="saveTgt" style="flex:1">Save right as OBJ</button></div>
+      <div class="row"><button id="copySrc" style="flex:1">Copy left as OBJ</button><button id="copyTgt" style="flex:1">Copy right as OBJ</button></div>
+      <div id="mNote" class="note"></div>
+      <p>Mirror Sculpt is the phone version of the Monolith mirror lab. Values are read from each object's
+        starting coordinates. Carving stops short of the far side, so the solid stays closed.</p>
+    </section>
+  </div>
+
+  <div id="tray" class="bar">
+    <div class="row">
+      <div class="seg" role="group" aria-label="Brush">
+        <button data-mode="push" aria-pressed="true">Push</button>
+        <button data-mode="carve" aria-pressed="false">Carve</button>
+        <button data-mode="smooth" aria-pressed="false">Smooth</button>
+      </div>
+      <button id="undoBtn" aria-label="Undo">↶</button>
+    </div>
+    <div class="row">
+      <div class="slider"><label for="size">Size</label><input type="range" id="size" min="8" max="120" value="35"></div>
+      <div class="slider"><label for="strength">Strength</label><input type="range" id="strength" min="5" max="100" value="45"></div>
+    </div>
+    <div class="row">
+      <button id="selChip" class="chip" hidden style="flex:1">Clear selection</button>
+      <button id="picBtn" style="flex:1">Picture</button>
+    </div>
+  </div>
+</div>
+
+<script id="engine">
+"use strict";
+/* ---- the engine: geometry, the link, carving, formulas, pictures ----
+   A port of monolith-space (standard-library Python) for the phone. */
+const E = (() => {
+  const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+  const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+  const mul = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const len = a => Math.sqrt(dot(a, a));
+  const unit = a => { const n = len(a); return n > 1e-12 ? mul(a, 1 / n) : [0, 0, 0]; };
+
+  class Mesh {
+    constructor(V, F, R) { this.V = V; this.F = F; this.R = R || V.map(v => v.slice()); this.topo(); }
+    clone() { return new Mesh(this.V.map(v => v.slice()), this.F.map(f => f.slice()), this.R.map(v => v.slice())); }
+    topo() {
+      this.around = this.V.map(() => []);
+      const nb = this.V.map(() => new Set());
+      this.F.forEach((f, fi) => f.forEach((i, k) => {
+        this.around[i].push(fi); nb[i].add(f[(k + f.length - 1) % f.length]); nb[i].add(f[(k + 1) % f.length]);
+      }));
+      this.nb = nb.map(s => [...s]);
+      let e = 0;
+      for (const f of this.F) for (let k = 0; k < f.length; k++) e = Math.max(e, len(sub(this.R[f[k]], this.R[f[(k + 1) % f.length]])));
+      this.edge = e;
+    }
+    areaNormal(fi, P = this.V) {
+      const f = this.F[fi]; let x = 0, y = 0, z = 0;
+      for (let k = 0; k < f.length; k++) {
+        const a = P[f[k]], b = P[f[(k + 1) % f.length]];
+        x += (a[1] - b[1]) * (a[2] + b[2]); y += (a[2] - b[2]) * (a[0] + b[0]); z += (a[0] - b[0]) * (a[1] + b[1]);
+      }
+      return [x / 2, y / 2, z / 2];
+    }
+    normalAt(i) { let n = [0, 0, 0]; for (const f of this.around[i]) n = add(n, this.areaNormal(f)); return unit(n); }
+    bounds(P = this.V) {
+      const lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9];
+      for (const p of P) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], p[k]); hi[k] = Math.max(hi[k], p[k]); }
+      return [lo, hi];
+    }
+  }
+
+  function column(cells = 4) {
+    const size = [1, 1, 5], half = mul(size, 0.5), ctr = [0, 0, 2.5], div = [cells, cells, cells * 5];
+    const e = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+    const sides = [[0, 1, 1, 2], [0, -1, 2, 1], [1, 1, 2, 0], [1, -1, 0, 2], [2, 1, 0, 1], [2, -1, 1, 0]];
+    const V = [], F = [], key = new Map();
+    const vert = p => { const k = p.map(c => c.toFixed(6)).join(","); if (!key.has(k)) { key.set(k, V.length); V.push(p); } return key.get(k); };
+    for (const [n, s, u, v] of sides) {
+      let c = add(ctr, mul(e[n], s * half[n])); c = sub(c, mul(e[u], half[u])); c = sub(c, mul(e[v], half[v]));
+      const g = [];
+      for (let i = 0; i <= div[u]; i++) { g.push([]); for (let j = 0; j <= div[v]; j++) g[i].push(vert(add(add(c, mul(e[u], size[u] * i / div[u])), mul(e[v], size[v] * j / div[v])))); }
+      for (let i = 0; i < div[u]; i++) for (let j = 0; j < div[v]; j++) F.push([g[i][j], g[i + 1][j], g[i + 1][j + 1], g[i][j + 1]]);
+    }
+    return new Mesh(V, F);
+  }
+
+  function subdivide(m) {
+    const V = m.V.map(v => v.slice()), R = m.R.map(v => v.slice()), F = [], mids = new Map();
+    const mid = (i, j) => {
+      const k = i < j ? i + "," + j : j + "," + i;
+      if (!mids.has(k)) { mids.set(k, V.length); V.push(mul(add(m.V[i], m.V[j]), 0.5)); R.push(mul(add(m.R[i], m.R[j]), 0.5)); }
+      return mids.get(k);
+    };
+    for (const f of m.F) {
+      const c = V.length, n = f.length;
+      V.push(mul(f.reduce((a, i) => add(a, m.V[i]), [0, 0, 0]), 1 / n));
+      R.push(mul(f.reduce((a, i) => add(a, m.R[i]), [0, 0, 0]), 1 / n));
+      const ms = f.map((_, k) => mid(f[k], f[(k + 1) % n]));
+      for (let k = 0; k < n; k++) F.push([f[k], ms[k], c, ms[(k + n - 1) % n]]);
+    }
+    return new Mesh(V, F, R);
+  }
+
+  // ---- nearest neighbours on a uniform grid
+  function grid(P) {
+    const [lo, hi] = new Mesh(P, [], P).bounds(P), ext = sub(hi, lo).sort((a, b) => a - b);
+    const area = ext[1] * ext[2] + ext[0] * ext[2] + ext[0] * ext[1];
+    const cell = Math.max(Math.sqrt(Math.max(area, 1e-12) * 2 / Math.max(P.length, 1)), 1e-6), cells = new Map();
+    const key = p => [Math.floor(p[0] / cell), Math.floor(p[1] / cell), Math.floor(p[2] / cell)];
+    P.forEach((p, i) => { const k = key(p).join(","); if (!cells.has(k)) cells.set(k, []); cells.get(k).push(i); });
+    function nearest(p, k) {
+      const c = key(p), found = []; let ring = 0;
+      for (;;) {
+        for (let dx = -ring; dx <= ring; dx++) for (let dy = -ring; dy <= ring; dy++) for (let dz = -ring; dz <= ring; dz++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz)) !== ring) continue;
+          const l = cells.get((c[0] + dx) + "," + (c[1] + dy) + "," + (c[2] + dz));
+          if (l) for (const i of l) { const d = sub(P[i], p); found.push([dot(d, d), i]); }
+        }
+        if (found.length >= k) { found.sort((a, b) => a[0] - b[0]); if (found[k - 1][0] <= (ring * cell) ** 2 || ring > 60) return found.slice(0, k); }
+        ring++;
+        if (ring > 200) { found.sort((a, b) => a[0] - b[0]); return found.slice(0, k); }
+      }
+    }
+    return { nearest };
+  }
+
+  // ---- maps: what a change becomes, and where it lands
+  const ID = p => p;
+  const MAPS = [
+    { name: "Mirror image across x", value: d => [-d[0], d[1], d[2]], place: p => [-p[0], p[1], p[2]], unplace: p => [-p[0], p[1], p[2]] },
+    { name: "Reflect the value in place", value: d => [-d[0], d[1], d[2]], place: ID, unplace: ID },
+    { name: "Negate: push becomes pull", value: d => mul(d, -1), place: ID, unplace: ID },
+    { name: "Half strength", value: d => mul(d, 0.5), place: ID, unplace: ID },
+    { name: "Wave along the height", value: (d, p) => mul(d, 1 - 2 * Math.sin(Math.PI * p[2])), place: ID, unplace: ID },
+    { name: "Mirror, then wave", value: (d, p) => mul([-d[0], d[1], d[2]], 1 - 2 * Math.sin(Math.PI * p[2])), place: p => [-p[0], p[1], p[2]], unplace: p => [-p[0], p[1], p[2]] },
+    { name: "Identity: copy exactly", value: d => d, place: ID, unplace: ID },
+  ];
+
+  // ---- formulas, parsed and checked before they run (no eval)
+  const FUNCS = {
+    sin: Math.sin, cos: Math.cos, tan: Math.tan, asin: Math.asin, acos: Math.acos, atan: Math.atan, atan2: Math.atan2,
+    sqrt: Math.sqrt, exp: Math.exp, log: Math.log, abs: v => Array.isArray(v) ? len(v) : Math.abs(v), min: Math.min, max: Math.max,
+    pow: Math.pow, floor: Math.floor, ceil: Math.ceil, sign: Math.sign,
+    clamp: (v, lo, hi) => Math.max(lo, Math.min(hi, v)), step: (e, v) => (v >= e ? 1 : 0),
+    smoothstep: (a, b, v) => { const t = Math.max(0, Math.min(1, (v - a) / (b - a))); return t * t * (3 - 2 * t); },
+  };
+  const NAMES = new Set(["d", "dx", "dy", "dz", "mag", "x", "y", "z", "r", "pi", "e"]);
+  function arith(op, a, b) {
+    const va = Array.isArray(a), vb = Array.isArray(b);
+    const f = { "+": (p, q) => p + q, "-": (p, q) => p - q, "*": (p, q) => p * q, "/": (p, q) => p / q, "%": (p, q) => p % q, "**": (p, q) => p ** q }[op];
+    if (!va && !vb) return f(a, b);
+    if (va && vb) { if (op === "+" || op === "-" || op === "*") return [0, 1, 2].map(i => f(a[i], b[i])); throw Error("that cannot be done to two vectors"); }
+    if (op === "+" || op === "-") throw Error("a vector can only be added to a vector");
+    return va ? a.map(c => f(c, b)) : b.map(c => f(a, c));
+  }
+  function parse(text) {
+    const toks = [], re = /\s*(\d+\.?\d*(?:e[+-]?\d+)?|\.\d+|\*\*|<=|>=|==|!=|[A-Za-z_]\w*|[-+*/%(),<>?:])/gy;
+    let m, pos = 0;
+    text = text.trim();
+    while (pos < text.length) {
+      re.lastIndex = pos; m = re.exec(text);
+      if (!m) throw Error(`cannot read the formula at character ${pos + 1}`);
+      toks.push(m[1]); pos = re.lastIndex;
+    }
+    let i = 0;
+    const peek = () => toks[i], take = t => { if (toks[i] !== t) throw Error(`expected "${t}"`); i++; };
+    function cond() { const a = or(); if (peek() === "if") { i++; const c = or(); take("else"); const b = cond(); return s => (truth(c(s)) ? a(s) : b(s)); } return a; }
+    function or() { let a = and(); while (peek() === "or") { i++; const l = a, r = and(); a = s => truth(l(s)) ? l(s) : r(s); } return a; }
+    function and() { let a = not(); while (peek() === "and") { i++; const l = a, r = not(); a = s => truth(l(s)) ? r(s) : l(s); } return a; }
+    function not() { if (peek() === "not") { i++; const a = not(); return s => (truth(a(s)) ? 0 : 1); } return cmp(); }
+    function cmp() {
+      let a = sum();
+      while (["<", ">", "<=", ">=", "==", "!="].includes(peek())) {
+        const op = toks[i++], l = a, r = sum();
+        a = s => { const p = l(s), q = r(s); return { "<": p < q, ">": p > q, "<=": p <= q, ">=": p >= q, "==": p === q, "!=": p !== q }[op] ? 1 : 0; };
+      }
+      return a;
+    }
+    function sum() { let a = term(); while (peek() === "+" || peek() === "-") { const op = toks[i++], l = a, r = term(); a = s => arith(op, l(s), r(s)); } return a; }
+    function term() { let a = unary(); while (["*", "/", "%"].includes(peek())) { const op = toks[i++], l = a, r = unary(); a = s => arith(op, l(s), r(s)); } return a; }
+    function unary() { if (peek() === "-") { i++; const a = unary(); return s => arith("*", a(s), -1); } if (peek() === "+") { i++; return unary(); } return power(); }
+    function power() { const a = atom(); if (peek() === "**") { i++; const b = unary(); return s => arith("**", a(s), b(s)); } return a; }
+    function atom() {
+      const t = toks[i++];
+      if (t === undefined) throw Error("the formula ends too soon");
+      if (/^[\d.]/.test(t)) { const v = parseFloat(t); return () => v; }
+      if (t === "(") {
+        const a = cond();
+        if (peek() === ",") { i++; const b = cond(); take(","); const c = cond(); take(")"); return s => [num(a(s)), num(b(s)), num(c(s))]; }
+        take(")"); return a;
+      }
+      if (/^[A-Za-z_]/.test(t)) {
+        if (peek() === "(") {
+          if (!(t in FUNCS)) throw Error(`"${t}" is not a function a formula can call`);
+          i++; const args = [];
+          if (peek() !== ")") { args.push(cond()); while (peek() === ",") { i++; args.push(cond()); } }
+          take(")"); const f = FUNCS[t];
+          return s => f(...args.map(g => g(s)));
+        }
+        if (!NAMES.has(t)) throw Error(`unknown name "${t}"`);
+        return s => s[t];
+      }
+      throw Error(`not allowed in a formula: "${t}"`);
+    }
+    const truth = v => (Array.isArray(v) ? len(v) > 0 : !!v);
+    const num = v => { if (Array.isArray(v)) throw Error("a component must be a number"); return v; };
+    const f = cond();
+    if (i < toks.length) throw Error(`unexpected "${toks[i]}"`);
+    return (d, p = [0, 0, 0]) => {
+      const out = f({ d, dx: d[0], dy: d[1], dz: d[2], mag: len(d), x: p[0], y: p[1], z: p[2], r: len(p), pi: Math.PI, e: Math.E });
+      if (Array.isArray(out)) return out;
+      if (typeof out === "number" && isFinite(out)) return mul(d, out);
+      return [0, 0, 0];
+    };
+  }
+
+  // ---- carving: a change that cuts in stops at 90% of the way to the far side
+  function hit(o, d, a, b, c) {
+    const e1 = sub(b, a), e2 = sub(c, a), p = cross(d, e2), det = dot(e1, p);
+    if (Math.abs(det) < 1e-12) return null;
+    const inv = 1 / det, s = sub(o, a), u = dot(s, p) * inv;
+    if (u < -1e-9 || u > 1 + 1e-9) return null;
+    const q = cross(s, e1), v = dot(d, q) * inv;
+    if (v < -1e-9 || u + v > 1 + 1e-9) return null;
+    const t = dot(e2, q) * inv;
+    return t > 1e-6 ? t : null;
+  }
+  function limitInward(m, field) {
+    if (!m.F.length) return field;                 // a point cloud has no far side
+    const inward = [];
+    for (const [i, d] of field) if (dot(d, m.normalAt(i)) < 0) inward.push(i);
+    if (!inward.length) return field;
+    const after = i => (field.has(i) ? add(m.V[i], field.get(i)) : m.V[i]);
+    for (const i of inward) {
+      const d = field.get(i), n = len(d), dir = mul(d, 1 / n), reach = n / 0.9, skip = new Set(m.around[i]), v = m.V[i];
+      let best = Infinity;
+      m.F.forEach((f, fi) => {
+        if (skip.has(fi)) return;
+        const p0 = m.V[f[0]];
+        if (len(sub(p0, v)) > reach + 2 * m.edge + 1e-9) return;
+        const P = f.map(after);
+        for (let k = 1; k < P.length - 1; k++) { const t = hit(v, dir, P[0], P[k], P[k + 1]); if (t !== null && t < best) best = t; }
+      });
+      if (best < Infinity && n > 0.9 * best) field.set(i, mul(d, 0.9 * best / n));
+    }
+    return field;
+  }
+
+  // ---- operations, each a sparse field {vertex -> displacement}
+  // a point cloud has no faces, so "outward" is away from the cloud's middle
+  const middle = m => { const [lo, hi] = m.bounds(); return mul(add(lo, hi), 0.5); };
+  const facingOf = (m, i, mid) => (m.F.length ? m.normalAt(i) : unit(sub(m.V[i], mid)));
+  function push(m, c, r, amount, mask) {
+    const out = new Map(), r2 = r * r, mid = m.F.length ? null : middle(m);
+    m.V.forEach((v, i) => {
+      if (mask && !mask.has(i)) return;
+      const d = sub(v, c), d2 = dot(d, d);
+      if (d2 >= r2) return;
+      const t = Math.sqrt(d2) / r, w = 1 - t * t * (3 - 2 * t);
+      if (w > 0) out.set(i, mul(facingOf(m, i, mid), amount * w));
+    });
+    return limitInward(m, out);
+  }
+  function smooth(m, c, r, strength, mask) {
+    const out = new Map(), g = m.F.length ? null : grid(m.V);
+    m.V.forEach((v, i) => {
+      if (mask && !mask.has(i)) return;
+      const dist = len(sub(v, c));
+      if (dist >= r) return;
+      const near = g ? g.nearest(v, 9).map(n => n[1]).filter(j => j !== i) : m.nb[i];
+      if (!near.length) return;
+      const t = dist / r, w = (1 - t * t * (3 - 2 * t)) * strength;
+      const avg = mul(near.reduce((a, j) => add(a, m.V[j]), [0, 0, 0]), 1 / near.length);
+      out.set(i, mul(sub(avg, v), w));
+    });
+    return out;
+  }
+
+  // ---- point clouds: more and fewer points, and merging on a grid
+  function densify(m) {
+    const V = m.V.map(v => v.slice()), R = m.R.map(v => v.slice()), g = grid(m.V), done = new Set();
+    m.V.forEach((v, i) => {
+      const j = g.nearest(v, 2).map(n => n[1]).find(k => k !== i);
+      if (j === undefined) return;
+      const key = i < j ? i + "," + j : j + "," + i;
+      if (done.has(key)) return; done.add(key);
+      V.push(mul(add(v, m.V[j]), 0.5)); R.push(mul(add(m.R[i], m.R[j]), 0.5));
+    });
+    return new Mesh(V, [], R);
+  }
+  function cluster(m, cell) {
+    const groups = new Map();
+    m.V.forEach((v, i) => { const k = Math.floor(v[0] / cell) + "," + Math.floor(v[1] / cell) + "," + Math.floor(v[2] / cell); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(i); });
+    const remap = new Int32Array(m.V.length), V = [], R = [];
+    for (const g of groups.values()) {
+      for (const i of g) remap[i] = V.length;
+      V.push(mul(g.reduce((a, i) => add(a, m.V[i]), [0, 0, 0]), 1 / g.length));
+      R.push(mul(g.reduce((a, i) => add(a, m.R[i]), [0, 0, 0]), 1 / g.length));
+    }
+    const F = [], seen = new Set();
+    for (const f of m.F) {
+      const o = [];
+      for (const i of f) { const j = remap[i]; if (!o.length || o[o.length - 1] !== j) o.push(j); }
+      if (o.length > 1 && o[0] === o[o.length - 1]) o.pop();
+      if (new Set(o).size !== o.length || o.length < 3) continue;
+      const k = [...o].sort((a, b) => a - b).join(",");
+      if (seen.has(k)) continue; seen.add(k); F.push(o);
+    }
+    return new Mesh(V, F, R);
+  }
+  function thin(m, target) {
+    if (m.V.length <= target) return m;
+    const [lo, hi] = m.bounds(), span = Math.max(...sub(hi, lo)) || 1;
+    let a = span * 1e-6, b = span, best = null;
+    for (let k = 0; k < 18; k++) {
+      const cell = Math.sqrt(a * b), t = cluster(m, cell);
+      if (!best || Math.abs(t.V.length - target) < Math.abs(best.V.length - target)) best = t;
+      if (t.V.length > target) a = cell; else b = cell;
+      if (Math.abs(t.V.length - target) <= Math.max(2, target / 50)) break;
+    }
+    return best;
+  }
+  // stand an imported object on the ground, no taller than the monolith and
+  // narrow enough to clear the mirror
+  function fit(m) {
+    const [lo, hi] = m.bounds(), ext = sub(hi, lo);
+    const s = Math.min(ext[2] > 1e-12 ? 5 / ext[2] : Infinity, Math.max(ext[0], ext[1]) > 1e-12 ? 2.6 / Math.max(ext[0], ext[1]) : Infinity);
+    const k = isFinite(s) ? s : 1, shift = [-(lo[0] + hi[0]) / 2 * k, -(lo[1] + hi[1]) / 2 * k, -lo[2] * k];
+    const V = m.V.map(p => [p[0] * k + shift[0], p[1] * k + shift[1], p[2] * k + shift[2]]);
+    return new Mesh(V, m.F, V.map(v => v.slice()));
+  }
+
+  // ---- reading files: PLY (ascii and binary, any extra properties), OBJ, XYZ/CSV/TXT
+  const UP = { z: p => p, y: p => [p[0], -p[2], p[1]], "-y": p => [p[0], p[2], -p[1]] };
+  function readModel(name, buf, up = "z") {
+    const ext = name.toLowerCase().split(".").pop(), turn = UP[up] || UP.z;
+    let V = [], F = [];
+    if (ext === "ply") [V, F] = readPly(buf);
+    else {
+      const text = new TextDecoder().decode(buf);
+      if (ext === "obj") {
+        for (const line of text.split(/\r?\n/)) {
+          const t = line.trim().split(/\s+/);
+          if (t[0] === "v" && t.length >= 4) V.push([+t[1], +t[2], +t[3]]);
+          else if (t[0] === "f" && t.length >= 4) F.push(t.slice(1).map(s => { const i = parseInt(s, 10); return i > 0 ? i - 1 : V.length + i; }));
+        }
+      } else {
+        for (const line of text.split(/\r?\n/)) {
+          const t = line.trim().split(/[,\s;]+/).map(Number);
+          if (t.length >= 3 && t.slice(0, 3).every(isFinite)) V.push(t.slice(0, 3));
+        }
+      }
+    }
+    if (!V.length) throw Error("no points found in that file");
+    V = V.map(turn);
+    return new Mesh(V, F.filter(f => f.length >= 3 && f.every(i => i >= 0 && i < V.length)));
+  }
+  function readPly(buf) {
+    const bytes = new Uint8Array(buf), head = new TextDecoder().decode(bytes.subarray(0, Math.min(bytes.length, 65536)));
+    const end = head.indexOf("end_header");
+    if (!head.startsWith("ply") || end < 0) throw Error("not a PLY file");
+    let pos = head.indexOf("\n", end) + 1;
+    const lines = head.slice(0, end).split(/\r?\n/), els = [];
+    let fmt = "";
+    for (const l of lines) {
+      const t = l.trim().split(/\s+/);
+      if (t[0] === "format") fmt = t[1];
+      else if (t[0] === "element") els.push({ name: t[1], count: +t[2], props: [] });
+      else if (t[0] === "property" && els.length) els[els.length - 1].props.push(t[1] === "list" ? { list: true, ct: t[2], it: t[3], name: t[4] } : { type: t[1], name: t[2] });
+    }
+    const SIZE = { char: 1, int8: 1, uchar: 1, uint8: 1, short: 2, int16: 2, ushort: 2, uint16: 2, int: 4, int32: 4, uint: 4, uint32: 4, float: 4, float32: 4, double: 8, float64: 8 };
+    const V = [], F = [];
+    if (fmt === "ascii") {
+      const toks = new TextDecoder().decode(bytes.subarray(pos)).trim().split(/\s+/); let k = 0;
+      for (const el of els) for (let n = 0; n < el.count; n++) {
+        const row = {};
+        for (const p of el.props) { if (p.list) { const c = +toks[k++]; row[p.name] = toks.slice(k, k + c).map(Number); k += c; } else row[p.name] = +toks[k++]; }
+        if (el.name === "vertex") V.push([row.x, row.y, row.z]);
+        else if (el.name === "face") { const f = row.vertex_indices || row.vertex_index; if (f) F.push(f); }
+      }
+      return [V, F];
+    }
+    if (fmt !== "binary_little_endian" && fmt !== "binary_big_endian") throw Error(`PLY format "${fmt}" is not read`);
+    const dv = new DataView(buf), le = fmt === "binary_little_endian";
+    const get = (type, at) => {
+      switch (type) {
+        case "char": case "int8": return dv.getInt8(at); case "uchar": case "uint8": return dv.getUint8(at);
+        case "short": case "int16": return dv.getInt16(at, le); case "ushort": case "uint16": return dv.getUint16(at, le);
+        case "int": case "int32": return dv.getInt32(at, le); case "uint": case "uint32": return dv.getUint32(at, le);
+        case "float": case "float32": return dv.getFloat32(at, le); default: return dv.getFloat64(at, le);
+      }
+    };
+    for (const el of els) {
+      if (!el.props.some(p => p.list)) {
+        const offs = {}; let size = 0;
+        for (const p of el.props) { offs[p.name] = [size, p.type]; size += SIZE[p.type]; }
+        if (el.name === "vertex") {
+          const [ox, tx] = offs.x, [oy, ty] = offs.y, [oz, tz] = offs.z;
+          for (let n = 0; n < el.count; n++) { const b = pos + n * size; V.push([get(tx, b + ox), get(ty, b + oy), get(tz, b + oz)]); }
+        }
+        pos += size * el.count;
+        continue;
+      }
+      for (let n = 0; n < el.count; n++) {
+        let face = null;
+        for (const p of el.props) {
+          if (p.list) {
+            const c = get(p.ct, pos); pos += SIZE[p.ct];
+            const items = []; for (let k = 0; k < c; k++) { items.push(get(p.it, pos)); pos += SIZE[p.it]; }
+            if (p.name === "vertex_indices" || p.name === "vertex_index") face = items;
+          } else pos += SIZE[p.type];
+        }
+        if (el.name === "face" && face) F.push(face);
+      }
+    }
+    return [V, F];
+  }
+
+  // ---- colour-mapped depth read back into depth (as space/colormaps.py)
+  const HEX = {"magma": "0000040303120A0822140E361E11492A115C38106C47107854137D6018806D1D81792282882781942C80A1307EAE347BBD3977CA3E72D6456CE24D66EC5860F3655CF8745CFB835FFD9266FEA36FFEB27AFEC185FECF92FDE0A1FCEEB0FCFDBF", "inferno": "0000040403120B0724160B39230C4C310A5C3E09664D0D6C5A116E67166E741A6E801F6C8F24699B2964A82E5FB43359C13A50CC4248D74B3FE05536E9612BEF6E21F57B17F8890CFB9706FCA80DFBB81DF9C72FF6D746F2E865F3F586FCFFA4", "plasma": "0D088722069031059741049D4E02A25B01A56700A87501A88104A78D0BA59814A0A21D9AAD2793B6308BBF3984C7427CCF4C74D6556DDD5E66E3685FE97257EF7C51F3874AF79143FA9C3CFCA934FDB52EFDC229FCCE25F9DD25F5EB27F0F921", "viridis": "440154470D6048186A482475472E7C4538824241863E4C8A3A548C365D8D32658E2E6D8E2B758E287D8E25848E228C8D1F948C1E9C8920A38625AB822EB37C3ABA7648C16E58C76569CD5B7FD34E93D741A8DB34BDDF26D5E21AEAE51AFDE725", "turbo": "30123B392A734040A24559CB476EE64682F84196FF33ADF725C0E71AD2D218E0BD22EBAA3CF58E59FB7379FE5996FE44AFFA37C3F134D7E535E7D739F5C53AFCB336FE9E2FFC8725F76F1AED5510E2430AD43305C32503AC1701950D017A0403"};
+  const stopsFn = hex => {
+    const cols = []; for (let i = 0; i < hex.length; i += 6) cols.push([0, 2, 4].map(k => parseInt(hex.substr(i + k, 2), 16) / 255));
+    return x => { x = Math.min(Math.max(x, 0), 1) * (cols.length - 1); const i = Math.min(Math.floor(x), cols.length - 2), t = x - i; return [0, 1, 2].map(c => cols[i][c] * (1 - t) + cols[i + 1][c] * t); };
+  };
+  const hsv = h => { const i = Math.floor(h * 6), f = h * 6 - i, q = 1 - f; return [[1, f, 0], [q, 1, 0], [0, 1, f], [0, q, 1], [f, 0, 1], [1, 0, q]][((i % 6) + 6) % 6]; };
+  const CMAPS = {
+    turbo: stopsFn(HEX.turbo),
+    jet: x => [3, 2, 1].map(c => Math.min(Math.max(1.5 - Math.abs(4 * Math.min(Math.max(x, 0), 1) - c), 0), 1)),
+    viridis: stopsFn(HEX.viridis), inferno: stopsFn(HEX.inferno), magma: stopsFn(HEX.magma), plasma: stopsFn(HEX.plasma),
+    hue: x => hsv(Math.min(Math.max(x, 0), 1) * 0.8),
+  };
+  const TABLES = {};
+  const tableOf = n => TABLES[n] || (TABLES[n] = Array.from({ length: 256 }, (_, i) => CMAPS[n](i / 255)));
+  function locate(c, n) {
+    const t = tableOf(n); let best = Infinity, at = 0;
+    for (let i = 0; i < 256; i++) { const d = (t[i][0] - c[0]) ** 2 + (t[i][1] - c[1]) ** 2 + (t[i][2] - c[2]) ** 2; if (d < best) { best = d; at = i; } }
+    return [at / 255, Math.sqrt(best)];
+  }
+  const pixel = (pic, i) => [pic.px[i * 3], pic.px[i * 3 + 1], pic.px[i * 3 + 2]];
+  function mapFit(pic, n) {
+    const N = pic.w * pic.h, step = Math.max(1, Math.floor(N / 400)); let s = 0, c = 0;
+    for (let i = 0; i < N; i += step) { s += locate(pixel(pic, i), n)[1]; c++; }
+    return s / c;
+  }
+  function isGrey(pic) {
+    const N = pic.w * pic.h, step = Math.max(1, Math.floor(N / 400));
+    for (let i = 0; i < N; i += step) { const p = pixel(pic, i); if (Math.max(...p) - Math.min(...p) > 0.04) return false; }
+    return true;
+  }
+  // a grey picture of depth (nearer = brighter) and how it was read
+  function decodeDepth(pic, how = "auto", flip = false) {
+    let name = how, score = 0, out;
+    if (how === "grey" || (how === "auto" && isGrey(pic))) { name = "grey"; out = Float32Array.from(pic.px); }
+    else {
+      if (how === "auto") { const s = Object.keys(CMAPS).map(n => [mapFit(pic, n), n]).sort((a, b) => a[0] - b[0]); [score, name] = s[0]; }
+      else score = mapFit(pic, name);
+      out = new Float32Array(pic.px.length); const cache = new Map();
+      for (let i = 0; i < pic.w * pic.h; i++) {
+        const p = pixel(pic, i), key = (p[0] * 63 | 0) * 4096 + (p[1] * 63 | 0) * 64 + (p[2] * 63 | 0);
+        let v = cache.get(key); if (v === undefined) { v = locate(p, name)[0]; cache.set(key, v); }
+        out[i * 3] = out[i * 3 + 1] = out[i * 3 + 2] = v;
+      }
+    }
+    if (flip) for (let i = 0; i < out.length; i++) out[i] = 1 - out[i];
+    return { pic: { w: pic.w, h: pic.h, px: out }, name, score };
+  }
+
+  // ---- pictures
+  function frame(m, pl, aspect) {
+    const [lo, hi] = m.bounds();
+    const c = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, pl.height];
+    const t = pl.orbit * Math.PI / 180;
+    let toward = [-Math.cos(t), -Math.sin(t), 0];
+    let right = unit(cross(toward, [0, 0, 1])), up = cross(right, toward);
+    const a = pl.tilt * Math.PI / 180;
+    [toward, up] = [add(mul(toward, Math.cos(a)), mul(up, -Math.sin(a))), add(mul(up, Math.cos(a)), mul(toward, Math.sin(a)))];
+    const s = pl.spin * Math.PI / 180;
+    [right, up] = [add(mul(right, Math.cos(s)), mul(up, Math.sin(s))), add(mul(up, Math.cos(s)), mul(right, -Math.sin(s)))];
+    return { c, right, up, toward, w: pl.size, h: pl.size * aspect };
+  }
+  function arrowDir(fr, angle, lift) {
+    const a = angle * Math.PI / 180, l = lift * Math.PI / 180;
+    const flat = add(mul(fr.right, Math.cos(a)), mul(fr.up, Math.sin(a)));
+    return unit(add(mul(flat, Math.cos(l)), mul(fr.toward, -Math.sin(l))));
+  }
+  function samplePic(pic, u, v) {
+    const x = Math.min(Math.max(u, 0), 1) * (pic.w - 1), y = (1 - Math.min(Math.max(v, 0), 1)) * (pic.h - 1);
+    const x0 = Math.floor(x), y0 = Math.floor(y), x1 = Math.min(x0 + 1, pic.w - 1), y1 = Math.min(y0 + 1, pic.h - 1), fx = x - x0, fy = y - y0;
+    const at = (xx, yy, ch) => pic.px[(yy * pic.w + xx) * 3 + ch];
+    return [0, 1, 2].map(ch => (at(x0, y0, ch) * (1 - fx) + at(x1, y0, ch) * fx) * (1 - fy) + (at(x0, y1, ch) * (1 - fx) + at(x1, y1, ch) * fx) * fy);
+  }
+  const lum = p => 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
+  function picture(m, pic, pl, opt, mask) {
+    const fr = frame(m, pl, pic.h / pic.w), facing = mul(fr.toward, -1);
+    const dir = opt.arrow ? arrowDir(fr, opt.angle, opt.lift) : facing;
+    const out = new Map(), feather = 0.05, mid = m.F.length ? null : middle(m);
+    m.V.forEach((p, i) => {
+      if (mask && !mask.has(i)) return;
+      const q = sub(p, fr.c), u = dot(q, fr.right) / fr.w + 0.5, v = dot(q, fr.up) / fr.h + 0.5;
+      if (u < 0 || u > 1 || v < 0 || v > 1) return;
+      if (dot(facingOf(m, i, mid), facing) <= 1e-9) return;
+      const e = Math.min(u, 1 - u, v, 1 - v) / feather, edge = e >= 1 ? 1 : e * e * (3 - 2 * e);
+      let k = opt.amount * edge;
+      if (opt.depth) k *= (1 - opt.depthWeight) + opt.depthWeight * lum(samplePic(opt.depth, u, v));
+      if (!k) return;
+      const c = samplePic(pic, u, v);
+      if (opt.mode === "colour") out.set(i, mul(add(add(mul(fr.right, 2 * c[0] - 1), mul(fr.up, 2 * c[1] - 1)), mul(facing, 2 * c[2] - 1)), k));
+      else { const l = lum(c); out.set(i, mul(dir, k * (opt.mode === "lift" ? l : 2 * l - 1))); }
+    });
+    return limitInward(m, out);
+  }
+
+  // ---- the link: source and target paired by their starting coordinates
+  class Link {
+    constructor(src, tgt, map, formula) { this.src = src; this.tgt = tgt; this.map = map; this.formula = formula; this.fan = null; }
+    build() {
+      const sc = this.centre(this.src), tc = this.centre(this.tgt);
+      const S = this.src.R.map(p => sub(p, sc)), g = grid(S);
+      this.fan = S.map(() => []); this.places = [];
+      this.tgt.R.forEach((q, j) => {
+        const p = this.map.unplace(sub(q, tc)); this.places.push(this.map.place(p));
+        this.places[j] = { p, landed: this.map.place(p) };
+        const near = g.nearest(p, 4), exact = near.filter(n => n[0] <= 1e-18);
+        if (exact.length) exact.forEach(n => this.fan[n[1]].push([j, 1 / exact.length]));
+        else { const tot = near.reduce((a, n) => a + 1 / n[0], 0); near.forEach(n => this.fan[n[1]].push([j, 1 / n[0] / tot])); }
+      });
+    }
+    centre(m) { const [lo, hi] = m.bounds(m.R); return mul(add(lo, hi), 0.5); }
+    apply(field) {
+      for (const [i, d] of field) this.src.V[i] = add(this.src.V[i], d);
+      if (!this.fan) this.build();
+      const acc = new Map();
+      for (const [i, d] of field) for (const [j, w] of this.fan[i]) { const a = acc.get(j) || [0, 0, 0]; acc.set(j, add(a, mul(d, w))); }
+      const out = new Map();
+      let peak = [[0, 0, 0], [0, 0, 0]];
+      for (const [j, d] of acc) {
+        const pl = this.places[j];
+        let v = this.map.value(d, pl.p);
+        if (this.formula) v = this.formula(v, pl.landed);
+        if (v.some(c => !isFinite(c))) continue;
+        if (len(v) > 1e-12) out.set(j, v);
+        if (len(d) > len(peak[0])) peak = [d, v];
+      }
+      limitInward(this.tgt, out);
+      for (const [j, d] of out) this.tgt.V[j] = add(this.tgt.V[j], d);
+      return { src: [...field.keys()], tgt: [...out.keys()], peak };
+    }
+  }
+
+  return { Mesh, column, subdivide, densify, thin, fit, readModel, decodeDepth, CMAPS, MAPS, parse, push, smooth, picture, frame, arrowDir, Link, add, sub, mul, dot, cross, len, unit, hit };
+})();
+</script>
+
+<script>
+"use strict";
+/* ---- the interface: drawing, touch, panels ---- */
+(() => {
+  const $ = id => document.getElementById(id);
+  const cv = $("cv"), ctx = cv.getContext("2d"), scene = $("scene");
+  const GAP = 1.6, CAMERA = 15, NEAR = 0.6, HEIGHT = 5;
+  const LIGHT = E.unit([-0.42, 0.52, 0.74]);
+  // the objects' colours: picked in More, remembered on this phone. Colour
+  // carries nothing (spec 11.6); it is only for seeing.
+  const DEFAULT_COL = { source: "#4c5057", target: "#5a5650" };
+  const SWATCHES = ["#4c5057", "#5a5650", "#c8a05a", "#b5654a", "#e8e1d3", "#6f8f72", "#3f6fa3", "#2b2b2e"];
+  const rgbOf = hex => [1, 3, 5].map(i => parseInt(hex.substr(i, 2), 16));
+  const COL = {};
+  const HEXCOL = {};
+  const setColour = (which, hex, save = true) => {
+    hex = hex.toLowerCase();
+    COL[which] = rgbOf(hex); HEXCOL[which] = hex;
+    const spec = document.querySelector(`.spec[data-for=${which}]`);
+    if (spec) spec.style.boxShadow = `inset 0 -4px 0 ${hex}`;
+    document.querySelectorAll(`.pick[data-for=${which}] .swatch`).forEach(s => s.setAttribute("aria-pressed", s.dataset.hex === hex ? "true" : "false"));
+    if (save) try { localStorage.setItem("mirror-sculpt-colour-" + which, hex); } catch (_) {}
+  };
+  const FORMULAS = [
+    ["(none)", ""], ["Stronger higher up", "d * (1 + z / 2.5)"], ["Reverse below the middle", "d if z > 0 else -d"],
+    ["Ripple along the height", "d * sin(z * 3)"], ["Fade away from the centre", "d * clamp(1 - r / 3, 0, 1)"],
+    ["Turn the change sideways", "(dy, -dx, dz)"], ["Only the vertical part", "(0, 0, dz)"],
+  ];
+
+  const S = {
+    src: E.column(), tgt: E.column(), mapIndex: 0, formula: null, link: null,
+    yaw: 15 * Math.PI / 180, pitch: 18 * Math.PI / 180, zoom: 1, panX: 0, panY: 0,
+    mode: "push", undo: [], selection: null, hover: null, rect: null,
+    pic: null, depth: null, picName: "",
+  };
+  const rewire = () => { S.link = new E.Link(S.src, S.tgt, E.MAPS[S.mapIndex], S.formula); };
+  rewire();
+
+  // ---- camera
+  let W = 0, H = 0, dpr = 1;
+  function resize() {
+    const r = scene.getBoundingClientRect();
+    dpr = Math.min(window.devicePixelRatio || 1, 2); W = r.width; H = r.height;
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); draw();
+  }
+  const scl = () => Math.min(W, H) * 0.105 * S.zoom * (W < H ? 1.25 : 1);
+  function cam(p) {
+    const cy = Math.cos(S.yaw), sy = Math.sin(S.yaw), cp = Math.cos(-S.pitch), sp = Math.sin(-S.pitch);
+    let [x, y, z] = [p[0], p[1], p[2] - HEIGHT / 2];
+    [x, y] = [x * cy - y * sy, x * sy + y * cy];
+    [y, z] = [y * cp - z * sp, y * sp + z * cp];
+    return [x, y, z];
+  }
+  function screen(c) {
+    const d = CAMERA - c[1]; if (d < NEAR) return null;
+    const k = CAMERA / d * scl();
+    return [W / 2 + S.panX + c[0] * k, H / 2 + S.panY - c[2] * k];
+  }
+  function world(c) {           // camera space back to world
+    const cy = Math.cos(S.yaw), sy = Math.sin(S.yaw), cp = Math.cos(-S.pitch), sp = Math.sin(-S.pitch);
+    const y1 = c[1] * cp + c[2] * sp, z = -c[1] * sp + c[2] * cp;
+    return [c[0] * cy + y1 * sy, -c[0] * sy + y1 * cy, z + HEIGHT / 2];
+  }
+  function ray(px, py) {
+    const s = scl(), X = (px - W / 2 - S.panX) / s, Z = -(py - H / 2 - S.panY) / s;
+    const o = world([0, CAMERA, 0]), far = world([X, 0, Z]);
+    return [o, E.unit(E.sub(far, o))];
+  }
+  function pick(px, py) {
+    const [o, d] = ray(px, py); let best = null;
+    for (const [which, m, off] of [["source", S.src, -GAP], ["target", S.tgt, GAP]]) {
+      const oo = [o[0] - off, o[1], o[2]];
+      if (!m.F.length) {                         // a cloud: the nearest point close to the ray
+        const tol = Math.max(radius() * 0.5, 0.06);
+        m.V.forEach(q => {
+          const w = E.sub(q, oo), t = E.dot(w, d); if (t <= 0) return;
+          if (E.dot(w, w) - t * t <= tol * tol && (!best || t < best.t)) best = { t, which, fi: -1, point: q.slice(), normal: E.mul(d, -1) };
+        });
+        continue;
+      }
+      m.F.forEach((f, fi) => {
+        for (let k = 1; k < f.length - 1; k++) {
+          const t = E.hit(oo, d, m.V[f[0]], m.V[f[k]], m.V[f[k + 1]]);
+          if (t !== null && (!best || t < best.t)) best = { t, which, fi, point: E.add(oo, E.mul(d, t)) };
+        }
+      });
+    }
+    if (best && best.fi >= 0) best.normal = E.unit(S[best.which === "source" ? "src" : "tgt"].areaNormal(best.fi));
+    return best;
+  }
+
+  // ---- drawing
+  let queued = false;
+  function draw() { if (!queued) { queued = true; requestAnimationFrame(paint); } }
+  function paint() {
+    queued = false;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = "#0e3a6b"; ctx.fillRect(0, 0, W, H);
+    ground();
+    const faces = [], clouds = [];
+    for (const [which, m, off] of [["source", S.src, -GAP], ["target", S.tgt, GAP]]) {
+      const C = m.V.map(v => cam([v[0] + off, v[1], v[2]])), P = C.map(screen);
+      m._screen = P; m._cam = C;
+      if (!m.F.length) { clouds.push([C, P, COL[which]]); continue; }
+      m.F.forEach(f => {
+        if (f.some(i => !P[i])) return;
+        const a = C[f[0]], b = C[f[1]], c = C[f[2]];
+        // quads: the cross of the diagonals; triangles and others: two edges
+        const u = f.length === 4 ? E.sub(c, a) : E.sub(b, a), v = f.length === 4 ? E.sub(C[f[3]], b) : E.sub(c, a);
+        const n = E.cross(u, v), l = E.len(n);
+        if (l < 1e-15 || n[1] < 0) return;
+        const lit = 0.5 + 0.5 * E.dot(n, LIGHT) / l;
+        faces.push([f.reduce((s, i) => s + C[i][1], 0) / f.length, f.map(i => P[i]), lit, COL[which]]);
+      });
+    }
+    faces.sort((p, q) => p[0] - q[0]);
+    for (const [, pts, lit, col] of faces) {
+      const k = 0.34 + 0.92 * lit, rgb = `rgb(${Math.min(255, col[0] * k | 0)},${Math.min(255, col[1] * k | 0)},${Math.min(255, col[2] * k | 0)})`;
+      ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+      ctx.closePath(); ctx.fillStyle = rgb; ctx.fill(); ctx.strokeStyle = rgb; ctx.lineWidth = 0.8; ctx.stroke();
+    }
+    for (const [C, P, col] of clouds) {          // dots, nearer ones lighter so depth reads
+      let lo = Infinity, hi = -Infinity;
+      for (const c of C) { lo = Math.min(lo, c[1]); hi = Math.max(hi, c[1]); }
+      const span = hi - lo || 1, size = P.length > 6000 ? 1.6 : 2.4;
+      for (let band = 0; band < 6; band++) {
+        const k = 1.1 + 0.18 * band;
+        ctx.fillStyle = `rgb(${Math.min(255, col[0] * k * 1.4 | 0)},${Math.min(255, col[1] * k * 1.4 | 0)},${Math.min(255, col[2] * k * 1.4 | 0)})`;
+        for (let i = 0; i < P.length; i++) {
+          const p = P[i]; if (!p) continue;
+          if (Math.min(5, ((C[i][1] - lo) / span * 6) | 0) !== band) continue;
+          ctx.fillRect(p[0] - size / 2, p[1] - size / 2, size, size);
+        }
+      }
+    }
+    selectionDots(); pictureOverlay(); brush(); rectangle();
+  }
+  function ground() {
+    const pts = [[0, -1.2, 0], [0, 1.2, 0], [0, 1.2, HEIGHT + 0.6], [0, -1.2, HEIGHT + 0.6]].map(p => screen(cam(p)));
+    if (pts.some(p => !p)) return;
+    ctx.setLineDash([4, 4]); ctx.strokeStyle = "#2a5288"; ctx.lineWidth = 1;
+    ctx.beginPath(); pts.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]))); ctx.closePath(); ctx.stroke(); ctx.setLineDash([]);
+  }
+  function selectionDots() {
+    if (!S.selection) return;
+    ctx.fillStyle = "#c8a05a";
+    for (const i of S.selection) { const p = S.src._screen[i]; if (p) ctx.fillRect(p[0] - 1.5, p[1] - 1.5, 3, 3); }
+  }
+  function brush() {
+    if (!S.hover) return;
+    const { point, normal } = S.hover, r = radius();
+    const c = [point[0] - GAP, point[1], point[2]];
+    const helper = Math.abs(normal[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0], u = E.unit(E.cross(normal, helper)), v = E.cross(normal, u);
+    ctx.strokeStyle = S.mode === "carve" ? "#e0876f" : "#c8a05a"; ctx.lineWidth = 1.5; ctx.beginPath();
+    for (let k = 0; k <= 32; k++) {
+      const t = 2 * Math.PI * k / 32, q = screen(cam(E.add(c, E.add(E.mul(u, r * Math.cos(t)), E.mul(v, r * Math.sin(t))))));
+      if (!q) return; k ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]);
+    }
+    ctx.stroke();
+  }
+  function rectangle() {
+    if (!S.rect) return;
+    const [a, b] = S.rect;
+    ctx.setLineDash([6, 4]); ctx.strokeStyle = "#c8a05a"; ctx.lineWidth = 1.5;
+    ctx.fillStyle = "rgba(200,160,90,0.12)";
+    ctx.fillRect(Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1]));
+    ctx.strokeRect(Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1]));
+    ctx.setLineDash([]);
+  }
+  function pictureOverlay() {
+    if (!pSheetOpen() || !S.pic) return;
+    const pl = placement(), fr = E.frame(S.src, pl, S.pic.h / S.pic.w);
+    const [lo, hi] = S.src.bounds(), dist = Math.max(hi[0] - lo[0], hi[1] - lo[1]) / 2 + 0.6;
+    const ctr = E.add(fr.c, E.mul(fr.toward, -dist));
+    const at = q => screen(cam([q[0] - GAP, q[1], q[2]]));       // the left object stands at x = -GAP
+    const P = (u, v) => at(E.add(ctr, E.add(E.mul(fr.right, (u - 0.5) * fr.w), E.mul(fr.up, (v - 0.5) * fr.h))));
+    const N = 18;
+    ctx.globalAlpha = 0.6;
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const q = [P(x / N, 1 - y / N), P((x + 1) / N, 1 - y / N), P((x + 1) / N, 1 - (y + 1) / N), P(x / N, 1 - (y + 1) / N)];
+      if (q.some(p => !p)) continue;
+      const sx = Math.min(S.pic.w - 1, ((x + 0.5) / N * S.pic.w) | 0), sy = Math.min(S.pic.h - 1, ((y + 0.5) / N * S.pic.h) | 0), o = (sy * S.pic.w + sx) * 3;
+      ctx.fillStyle = `rgb(${S.pic.px[o] * 255 | 0},${S.pic.px[o + 1] * 255 | 0},${S.pic.px[o + 2] * 255 | 0})`;
+      ctx.beginPath(); q.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]))); ctx.closePath(); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    const corners = [P(0, 0), P(1, 0), P(1, 1), P(0, 1)];
+    if (corners.some(p => !p)) return;
+    ctx.strokeStyle = "#c8a05a"; ctx.lineWidth = 1.5; ctx.beginPath();
+    corners.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]))); ctx.closePath(); ctx.stroke();
+    const dir = $("pArrow").value === "on" ? E.arrowDir(fr, +$("pAngle").value, +$("pLift").value) : E.mul(fr.toward, -1);
+    const t = P(0.5, 0.5), hw = screen(cam(E.add([ctr[0] - GAP, ctr[1], ctr[2]], E.mul(dir, 0.9))));
+    if (!t || !hw) return;
+    ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(t[0], t[1]); ctx.lineTo(hw[0], hw[1]); ctx.stroke();
+    const ang = Math.atan2(hw[1] - t[1], hw[0] - t[0]);
+    ctx.beginPath(); ctx.moveTo(hw[0], hw[1]); ctx.lineTo(hw[0] - 11 * Math.cos(ang - 0.45), hw[1] - 11 * Math.sin(ang - 0.45));
+    ctx.moveTo(hw[0], hw[1]); ctx.lineTo(hw[0] - 11 * Math.cos(ang + 0.45), hw[1] - 11 * Math.sin(ang + 0.45)); ctx.stroke();
+  }
+
+  // ---- doing things
+  const radius = () => +$("size").value / 100;
+  const strength = () => +$("strength").value / 100;
+  function snapshot() { S.undo.push([S.src.clone(), S.tgt.clone()]); if (S.undo.length > 40) S.undo.shift(); }
+  function undo() {
+    const s = S.undo.pop(); if (!s) return toast("Nothing to undo");
+    [S.src, S.tgt] = s; rewire(); draw(); toast("Undone");
+  }
+  function dab(point, mode) {
+    const r = radius(), k = strength();
+    const field = mode === "smooth" ? E.smooth(S.src, point, r, 0.15 + 0.6 * k, S.selection)
+                                    : E.push(S.src, point, r, (mode === "carve" ? -1 : 1) * r * 0.12 * k, S.selection);
+    if (field.size) S.link.apply(field);
+  }
+  let toastTimer = 0;
+  function toast(text) { const t = $("toast"); t.textContent = text; t.classList.add("on"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("on"), 1800); }
+
+  // ---- touch and mouse
+  const ptrs = new Map();
+  let gesture = null;          // {kind: "sculpt"|"orbit"|"two"|"select", ...}
+  let holdTimer = 0;
+  const mid = () => { const p = [...ptrs.values()]; return [(p[0].x + p[1].x) / 2, (p[0].y + p[1].y) / 2]; };
+  const spread = () => { const p = [...ptrs.values()]; return Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y); };
+  const local = e => { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+
+  cv.addEventListener("contextmenu", e => e.preventDefault());
+  cv.addEventListener("pointerdown", e => {
+    try { cv.setPointerCapture(e.pointerId); } catch (_) {}
+    const [x, y] = local(e);
+    ptrs.set(e.pointerId, { x, y, x0: x, y0: y });
+    $("legend").hidden = true;
+    if (ptrs.size === 2) {
+      clearTimeout(holdTimer);
+      if (gesture && gesture.kind === "sculpt" && gesture.dabs === 0) S.undo.pop();
+      const ids = [...ptrs.keys()];
+      gesture = { kind: "two", mid: mid(), spread: spread(), anchor: ids[0], corner: ids[1] };
+      holdTimer = setTimeout(() => {
+        if (gesture && gesture.kind === "two" && !gesture.moved) {
+          const a = ptrs.get(gesture.anchor), b = ptrs.get(gesture.corner);
+          gesture = { kind: "select", anchor: gesture.anchor, corner: gesture.corner };
+          S.rect = [[a.x, a.y], [b.x, b.y]]; draw(); toast("Drag the second finger to size the selection");
+          if (navigator.vibrate) try { navigator.vibrate(15); } catch (_) {}
+        }
+      }, 450);
+      return;
+    }
+    if (ptrs.size > 2) return;
+    const shiftBox = e.pointerType === "mouse" && e.shiftKey;
+    if (e.pointerType === "mouse" && e.button === 2) { gesture = { kind: "orbit", last: [x, y] }; return; }
+    if (e.pointerType === "mouse" && e.button === 1) { gesture = { kind: "pan", last: [x, y] }; return; }
+    if (shiftBox) { gesture = { kind: "select", mouse: true }; S.rect = [[x, y], [x, y]]; return; }
+    const hit = pick(x, y);
+    if (hit && hit.which === "source") {
+      snapshot();
+      gesture = { kind: "sculpt", last: null, dabs: 0, t0: performance.now(), pending: hit };
+      // a short wait, so a second finger landing just after does not leave a dab
+      setTimeout(() => { if (gesture && gesture.kind === "sculpt" && gesture.pending) { sculptAt(gesture.pending); gesture.pending = null; } }, 70);
+    } else {
+      if (hit && hit.which === "target") toast("The right object answers the left: sculpt the left one");
+      gesture = { kind: "orbit", last: [x, y] };
+    }
+  });
+  function sculptAt(hit) {
+    const r = radius();
+    if (gesture.last && E.len(E.sub(hit.point, gesture.last)) < r * 0.25) return;
+    gesture.last = hit.point; gesture.dabs++;
+    S.hover = hit;
+    const mode = S.mode;
+    dab(hit.point, mode); draw();
+  }
+  cv.addEventListener("pointermove", e => {
+    const [x, y] = local(e);
+    const p = ptrs.get(e.pointerId);
+    if (!p) {                                      // a mouse hovering: show the brush
+      if (e.pointerType === "mouse") { const h = pick(x, y); S.hover = h && h.which === "source" ? h : null; draw(); }
+      return;
+    }
+    p.x = x; p.y = y;
+    if (!gesture) return;
+    if (gesture.kind === "sculpt") {
+      if (gesture.pending) { sculptAt(gesture.pending); gesture.pending = null; }
+      const h = pick(x, y); if (h && h.which === "source") sculptAt(h);
+    } else if (gesture.kind === "orbit" || gesture.kind === "pan") {
+      const dx = x - gesture.last[0], dy = y - gesture.last[1]; gesture.last = [x, y];
+      if (gesture.kind === "pan") { S.panX += dx; S.panY += dy; }
+      else { S.yaw += dx * 0.006; S.pitch = Math.max(-0.17, Math.min(1.22, S.pitch + dy * 0.005)); }
+      draw();
+    } else if (gesture.kind === "two") {
+      const m = mid(), s = spread();
+      if (Math.hypot(p.x - p.x0, p.y - p.y0) > 10) gesture.moved = true;
+      if (gesture.moved) {
+        S.yaw += (m[0] - gesture.mid[0]) * 0.006;
+        S.pitch = Math.max(-0.17, Math.min(1.22, S.pitch + (m[1] - gesture.mid[1]) * 0.005));
+        S.zoom = Math.max(0.4, Math.min(8, S.zoom * s / gesture.spread));
+        gesture.mid = m; gesture.spread = s; draw();
+      }
+    } else if (gesture.kind === "select") {
+      if (gesture.mouse) S.rect[1] = [x, y];
+      else if (e.pointerId === gesture.corner) S.rect[1] = [x, y];
+      else if (e.pointerId === gesture.anchor) S.rect[0] = [x, y];
+      draw();
+    }
+  });
+  function finishSelection() {
+    const [a, b] = S.rect, x0 = Math.min(a[0], b[0]), x1 = Math.max(a[0], b[0]), y0 = Math.min(a[1], b[1]), y1 = Math.max(a[1], b[1]);
+    S.rect = null;
+    if (x1 - x0 < 8 || y1 - y0 < 8) { draw(); return; }
+    const sel = new Set(), eye = E.unit(E.sub(world([0, CAMERA, 0]), [-GAP, 0, HEIGHT / 2]));
+    S.src.V.forEach((v, i) => {
+      const p = S.src._screen[i];
+      if (!p || p[0] < x0 || p[0] > x1 || p[1] < y0 || p[1] > y1) return;
+      if (!S.src.F.length) { sel.add(i); return; }       // a cloud: everything inside the box
+      const toEye = E.unit(E.sub(world([0, CAMERA, 0]), [v[0] - GAP, v[1], v[2]]));
+      if (E.dot(S.src.normalAt(i), toEye) > 0) sel.add(i);
+    });
+    S.selection = sel.size ? sel : null;
+    $("selChip").hidden = !S.selection;
+    $("selChip").textContent = `Clear selection (${sel.size})`;
+    toast(sel.size ? `${sel.size} points selected: brushes now work only there` : "Nothing selected");
+    draw();
+  }
+  function release(e) {
+    const p = ptrs.get(e.pointerId); if (!p) return;
+    ptrs.delete(e.pointerId);
+    clearTimeout(holdTimer);
+    if (!gesture) return;
+    if (gesture.kind === "select") { if (S.rect) finishSelection(); gesture = ptrs.size ? { kind: "wait" } : null; return; }
+    if (gesture.kind === "sculpt") {
+      if (gesture.pending) { sculptAt(gesture.pending); gesture.pending = null; }
+      if (gesture.dabs === 0) S.undo.pop();
+      if (e.pointerType !== "mouse") S.hover = null;
+      draw();
+    }
+    if (ptrs.size === 0) gesture = null;
+    else if (gesture.kind === "two") { const q = [...ptrs.values()][0]; gesture = { kind: "orbit", last: [q.x, q.y] }; }
+  }
+  cv.addEventListener("pointerup", release);
+  cv.addEventListener("pointercancel", release);
+  cv.addEventListener("pointerleave", e => { if (e.pointerType === "mouse" && !ptrs.size) { S.hover = null; draw(); } });
+  cv.addEventListener("wheel", e => { e.preventDefault(); S.zoom = Math.max(0.4, Math.min(8, S.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12))); draw(); }, { passive: false });
+  cv.addEventListener("dblclick", () => { S.yaw = 15 * Math.PI / 180; S.pitch = 18 * Math.PI / 180; S.zoom = 1; S.panX = S.panY = 0; draw(); });
+
+  // ---- panels
+  document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => {
+    S.mode = b.dataset.mode;
+    document.querySelectorAll(".seg button").forEach(o => o.setAttribute("aria-pressed", o === b ? "true" : "false"));
+  }));
+  $("undoBtn").addEventListener("click", undo);
+  $("selChip").addEventListener("click", () => { S.selection = null; $("selChip").hidden = true; draw(); toast("Selection cleared"); });
+  E.MAPS.forEach((m, i) => { const o = document.createElement("option"); o.value = i; o.textContent = m.name; $("mapSel").appendChild(o); });
+  $("mapSel").addEventListener("change", e => { S.mapIndex = +e.target.value; rewire(); toast(E.MAPS[S.mapIndex].name); });
+
+  const sheets = ["fSheet", "pSheet", "mSheet"];
+  const open = id => { sheets.forEach(s => ($(s).hidden = s !== id || !$(s).hidden)); draw(); };
+  const pSheetOpen = () => !$("pSheet").hidden;
+  $("fBtn").addEventListener("click", () => open("fSheet"));
+  $("picBtn").addEventListener("click", () => open("pSheet"));
+  $("moreBtn").addEventListener("click", () => open("mSheet"));
+  document.querySelectorAll("[data-close]").forEach(b => b.addEventListener("click", () => { b.closest(".sheet").hidden = true; draw(); }));
+
+  FORMULAS.forEach(([label, text]) => { const o = document.createElement("option"); o.value = text; o.textContent = label; $("fPreset").appendChild(o); });
+  function setFormula(text) {
+    const note = $("fNote");
+    if (!text.trim()) { S.formula = null; note.textContent = "No function: the map alone."; note.className = "note"; rewire(); return; }
+    try {
+      const f = E.parse(text); const t = f([0.1, 0, 0], [0.5, 0, 1]);
+      if (!t.every(isFinite)) throw Error("it gives no number on a sample change");
+      S.formula = f; note.textContent = `In use after the map: ${text}`; note.className = "note"; rewire();
+    } catch (err) { note.textContent = `Not used: ${err.message}`; note.className = "note bad"; }
+  }
+  $("fPreset").addEventListener("change", e => { $("fText").value = e.target.value; setFormula(e.target.value); });
+  $("fText").addEventListener("change", e => setFormula(e.target.value));
+
+  // pictures
+  const placement = () => ({ orbit: +$("pOrbit").value, spin: +$("pSpin").value, tilt: +$("pTilt").value, height: +$("pHeight").value, size: +$("pSize").value });
+  document.querySelectorAll("#pSheet input[type=range]").forEach(r => {
+    const out = r.parentElement.querySelector("output");
+    const show = () => { if (out) out.textContent = r.id === "pDepth" ? r.value + "%" : ["pOrbit", "pSpin", "pTilt", "pAngle", "pLift"].includes(r.id) ? r.value + "°" : r.value; };
+    r.addEventListener("input", () => { show(); draw(); }); show();
+  });
+  $("pArrow").addEventListener("change", draw);
+  function readImage(file, done) {
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, 128 / Math.max(img.width, img.height)), w = Math.max(1, Math.round(img.width * k)), h = Math.max(1, Math.round(img.height * k));
+      const c = document.createElement("canvas"); c.width = w; c.height = h;
+      const g = c.getContext("2d"); g.drawImage(img, 0, 0, w, h);
+      const data = g.getImageData(0, 0, w, h).data, px = new Float32Array(w * h * 3);
+      for (let i = 0; i < w * h; i++) { px[i * 3] = data[i * 4] / 255; px[i * 3 + 1] = data[i * 4 + 1] / 255; px[i * 3 + 2] = data[i * 4 + 2] / 255; }
+      URL.revokeObjectURL(url); done({ w, h, px });
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); toast("That file could not be read as an image"); };
+    img.src = url;
+  }
+  function picNote() {
+    let d = " · no depth (uniform)";
+    if (S.depth) {
+      const q = S.depthRead.score < 0.05 ? "matches" : S.depthRead.score < 0.12 ? "roughly matches" : "does not match well, so depth is approximate";
+      d = S.depthRead.name === "grey" ? " · depth read as grey" : ` · depth read as ${S.depthRead.name} (${q})`;
+    }
+    $("pNote").textContent = S.pic ? `${S.picName} · ${S.pic.w} × ${S.pic.h}${d}` : "No picture.";
+  }
+  // a depth image is kept as loaded and read through the depth-colour setting
+  function readDepth() {
+    if (!S.depthRaw) return;
+    S.depthRead = E.decodeDepth(S.depthRaw, $("dHow").value, $("dFlip").value === "1");
+    S.depth = S.depthRead.pic; picNote();
+  }
+  $("pFile").addEventListener("change", e => { const f = e.target.files[0]; if (f) readImage(f, p => { S.pic = p; S.picName = f.name; S.depth = S.depthRaw = null; picNote(); draw(); }); });
+  $("dFile").addEventListener("change", e => { const f = e.target.files[0]; if (f) readImage(f, p => { S.depthRaw = p; readDepth(); }); });
+  $("dHow").addEventListener("change", readDepth);
+  $("dFlip").addEventListener("change", readDepth);
+  $("pApply").addEventListener("click", () => {
+    if (!S.pic) return toast("Choose a photo first");
+    snapshot();
+    const field = E.picture(S.src, S.pic, placement(), {
+      amount: +$("pAmount").value, mode: $("pMode").value, arrow: $("pArrow").value === "on",
+      angle: +$("pAngle").value, lift: +$("pLift").value, depth: S.depth, depthWeight: +$("pDepth").value / 100,
+    }, S.selection);
+    if (!field.size) { S.undo.pop(); return toast("The picture does not reach the left object: move it or make it larger"); }
+    S.link.apply(field); draw(); toast(`Picture applied to ${field.size} points`);
+  });
+  // a sample picture, so the panel works before any photo is chosen
+  (() => {
+    const w = 96, h = 96, px = new Float32Array(w * h * 3);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const v = 0.5 + 0.5 * Math.cos(Math.hypot(x - 48, y - 48) / 5); px.fill(v, (y * w + x) * 3, (y * w + x) * 3 + 3); }
+    S.pic = { w, h, px }; S.picName = "sample rings";
+  })();
+
+  // more
+  const finer = m => (m.F.length ? E.subdivide(m) : E.densify(m));
+  const coarser = m => E.thin(m, Math.max(200, Math.round(m.V.length / (m.F.length ? 4 : 2))));
+  const counts = () => { const d = m => m.F.length ? `${m.V.length.toLocaleString()} points, ${m.F.length.toLocaleString()} faces` : `${m.V.length.toLocaleString()} points (cloud)`; $("mNote").textContent = `Left: ${d(S.src)} · right: ${d(S.tgt)}`; };
+  $("finer").addEventListener("click", () => {
+    if (Math.max(S.src.V.length, S.tgt.V.length) > 20000) return toast("Already fine enough for a phone");
+    snapshot(); S.src = finer(S.src); S.tgt = finer(S.tgt); S.selection = null; $("selChip").hidden = true; rewire(); draw(); counts();
+  });
+  $("coarser").addEventListener("click", () => {
+    snapshot(); S.src = coarser(S.src); S.tgt = coarser(S.tgt); S.selection = null; $("selChip").hidden = true; rewire(); draw(); counts();
+  });
+  $("mFile").addEventListener("change", e => {
+    const f = e.target.files[0]; if (!f) return;
+    $("mNote").textContent = `Reading ${f.name}…`;
+    f.arrayBuffer().then(buf => {
+      let m = E.readModel(f.name, buf, $("mUp").value);
+      const read = m.V.length, cap = +$("mCap").value;
+      if (read > cap) m = E.thin(m, cap);
+      m = E.fit(m);
+      snapshot();
+      const where = $("mWhere").value;
+      if (where !== "right") S.src = m;
+      if (where !== "left") S.tgt = where === "both" ? m.clone() : m;
+      S.selection = null; $("selChip").hidden = true; rewire(); draw(); counts();
+      toast(`${f.name}: ${read.toLocaleString()} points read${read > cap ? `, thinned to ${m.V.length.toLocaleString()}` : ""}`);
+    }).catch(err => { $("mNote").textContent = `Could not read ${f.name}: ${err.message}`; });
+    e.target.value = "";
+  });
+  $("resetBtn").addEventListener("click", () => {
+    snapshot(); S.src = E.column(); S.tgt = E.column(); S.selection = null; $("selChip").hidden = true; rewire(); draw(); toast("Started again (undo brings it back)");
+  });
+  const obj = (m, name) => [`o ${name}`, ...m.V.map(v => `v ${v[0].toFixed(5)} ${v[1].toFixed(5)} ${v[2].toFixed(5)}`), ...m.F.map(f => "f " + f.map(i => i + 1).join(" "))].join("\n");
+  async function copy(text, label) {
+    try { await navigator.clipboard.writeText(text); $("mNote").textContent = `${label} copied as OBJ (${text.length.toLocaleString()} characters). Paste into a .obj file.`; }
+    catch (_) { $("mNote").textContent = "Copying is not allowed here. Use the desktop lab to export."; }
+  }
+  $("copySrc").addEventListener("click", () => copy(obj(S.src, "left"), "Left object"));
+  $("copyTgt").addEventListener("click", () => copy(obj(S.tgt, "right"), "Right object"));
+  // a real file: the phone's share sheet (Save to Files, AirDrop) where there is
+  // one, otherwise a download. Inside the Claude page both are blocked, so it
+  // says so; the home-screen app can save.
+  const framed = (() => { try { return window.self !== window.top; } catch (_) { return true; } })();
+  async function saveFile(text, name) {
+    if (framed) { $("mNote").textContent = "Saving files isn't allowed inside the Claude page. Use Copy here, or Save in the home-screen app."; return; }
+    const file = new File([text], name, { type: "text/plain" });
+    try {
+      if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name }); $("mNote").textContent = `${name} handed to the share sheet.`; return; }
+    } catch (err) { if (err && err.name === "AbortError") { $("mNote").textContent = "Not saved."; return; } }
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    $("mNote").textContent = `${name} downloaded (${text.length.toLocaleString()} characters).`;
+  }
+  const stamp = () => new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
+  $("saveSrc").addEventListener("click", () => saveFile(obj(S.src, "left"), `mirror-left-${stamp()}.obj`));
+  $("saveTgt").addEventListener("click", () => saveFile(obj(S.tgt, "right"), `mirror-right-${stamp()}.obj`));
+
+  // colours: preset swatches, your own saved swatches, and a spectrum box
+  let own = [];
+  try { own = JSON.parse(localStorage.getItem("mirror-sculpt-swatches") || "[]").filter(h => /^#[0-9a-f]{6}$/i.test(h)).slice(0, 8); } catch (_) {}
+  function swatchRows() {
+    for (const which of ["source", "target"]) {
+      const box = document.querySelector(`.pick[data-for=${which}]`);
+      box.querySelectorAll(".swatch").forEach(s => s.remove());
+      const spec = box.querySelector(".spec");
+      [...SWATCHES.map(h => [h, false]), ...own.map(h => [h, true])].forEach(([hex, mine]) => {
+        const b = document.createElement("button");
+        b.className = "swatch" + (mine ? " own" : ""); b.dataset.hex = hex; b.style.background = hex;
+        b.setAttribute("aria-label", `${which === "source" ? "Left" : "Right"} object ${hex}${mine ? " (your swatch)" : ""}`);
+        b.addEventListener("click", () => { setColour(which, hex); syncSpectrum(); draw(); });
+        box.insertBefore(b, spec);
+      });
+      if (HEXCOL[which]) setColour(which, HEXCOL[which], false);
+    }
+  }
+  // the spectrum: saturation across, brightness down, for the hue on the strip
+  const sv = $("svBox"), hb = $("hueBar"), spec = { which: null, h: 0, s: 0, v: 0 };
+  const rgbToHsv = ([r, g, b]) => {
+    r /= 255; g /= 255; b /= 255;
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+    let h = 0;
+    if (d) h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return [((h * 60) + 360) % 360, mx ? d / mx : 0, mx];
+  };
+  const hsvToHex = (h, s, v) => {
+    const f = n => { const k = (n + h / 60) % 6; return v - v * s * Math.max(0, Math.min(k, 4 - k, 1)); };
+    return "#" + [f(5), f(3), f(1)].map(c => Math.round(c * 255).toString(16).padStart(2, "0")).join("");
+  };
+  function paintSpectrum() {
+    for (const c of [sv, hb]) { const w = c.clientWidth || 300; if (c.width !== w * 2) c.width = w * 2; }
+    const g = sv.getContext("2d"), W2 = sv.width, H2 = sv.height;
+    g.fillStyle = hsvToHex(spec.h, 1, 1); g.fillRect(0, 0, W2, H2);
+    let gr = g.createLinearGradient(0, 0, W2, 0); gr.addColorStop(0, "#fff"); gr.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = gr; g.fillRect(0, 0, W2, H2);
+    gr = g.createLinearGradient(0, 0, 0, H2); gr.addColorStop(0, "rgba(0,0,0,0)"); gr.addColorStop(1, "#000");
+    g.fillStyle = gr; g.fillRect(0, 0, W2, H2);
+    const mx = spec.s * W2, my = (1 - spec.v) * H2;
+    g.lineWidth = 4; g.strokeStyle = spec.v > 0.5 ? "#000" : "#fff"; g.beginPath(); g.arc(mx, my, 14, 0, 2 * Math.PI); g.stroke();
+    const h = hb.getContext("2d"), hg = h.createLinearGradient(0, 0, hb.width, 0);
+    for (let k = 0; k <= 6; k++) hg.addColorStop(k / 6, hsvToHex(k * 60, 1, 1));
+    h.fillStyle = hg; h.fillRect(0, 0, hb.width, hb.height);
+    const hx = spec.h / 360 * hb.width;
+    h.lineWidth = 4; h.strokeStyle = "#fff"; h.strokeRect(hx - 6, 2, 12, hb.height - 4);
+    $("specHex").textContent = hsvToHex(spec.h, spec.s, spec.v);
+  }
+  function syncSpectrum() {
+    if (!spec.which || $("spectrum").hidden) return;
+    [spec.h, spec.s, spec.v] = rgbToHsv(COL[spec.which]); paintSpectrum();
+  }
+  function openSpectrum(which) {
+    const showing = !$("spectrum").hidden && spec.which === which;
+    $("spectrum").hidden = showing; spec.which = showing ? null : which;
+    document.querySelectorAll(".spec").forEach(b => b.setAttribute("aria-pressed", b.dataset.for === spec.which ? "true" : "false"));
+    if (!showing) { $("specFor").textContent = which === "source" ? "Left object" : "Right object"; requestAnimationFrame(syncSpectrum); }
+  }
+  function dragOn(canvas, apply) {
+    const at = e => { const r = canvas.getBoundingClientRect(); apply(Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))); };
+    let held = null;                       // the finger dragging, whether or not capture took
+    canvas.addEventListener("pointerdown", e => { held = e.pointerId; try { canvas.setPointerCapture(e.pointerId); } catch (_) {} at(e); });
+    canvas.addEventListener("pointermove", e => { if (held === e.pointerId) at(e); });
+    for (const kind of ["pointerup", "pointercancel"]) canvas.addEventListener(kind, e => { if (held === e.pointerId) held = null; });
+  }
+  const applySpectrum = () => { setColour(spec.which, hsvToHex(spec.h, spec.s, spec.v)); paintSpectrum(); draw(); };
+  dragOn(sv, (x, y) => { spec.s = x; spec.v = 1 - y; applySpectrum(); });
+  dragOn(hb, x => { spec.h = Math.min(359.9, x * 360); applySpectrum(); });
+  document.querySelectorAll(".spec").forEach(b => b.addEventListener("click", () => openSpectrum(b.dataset.for)));
+  $("specDone").addEventListener("click", () => openSpectrum(spec.which));
+  $("specSave").addEventListener("click", () => {
+    const hex = HEXCOL[spec.which];
+    if (SWATCHES.includes(hex) || own.includes(hex)) return toast("That colour is already a swatch");
+    own = [hex, ...own].slice(0, 8);
+    try { localStorage.setItem("mirror-sculpt-swatches", JSON.stringify(own)); } catch (_) {}
+    swatchRows(); toast(`Saved ${hex} as a swatch`);
+  });
+  for (const which of ["source", "target"]) {
+    let saved = null;
+    try { saved = localStorage.getItem("mirror-sculpt-colour-" + which); } catch (_) {}
+    HEXCOL[which] = /^#[0-9a-f]{6}$/i.test(saved || "") ? saved.toLowerCase() : DEFAULT_COL[which];
+    setColour(which, HEXCOL[which], false);
+  }
+  swatchRows();
+
+  window.addEventListener("resize", resize);
+  new ResizeObserver(resize).observe(scene);
+  resize();
+})();
+</script>
+
+<script>
+/* keep the app on the phone: a service worker caches it after the first visit */
+if ("serviceWorker" in navigator && location.protocol !== "file:") {
+  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+}
+</script>
+</body>
+</html>
